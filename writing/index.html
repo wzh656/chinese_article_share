@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<title>《冰上教父》好文分享</title>
+	
+	<style>
+	body{
+		margin: 0;
+		padding: 8px;
+		background-color: white;
+	}
+	canvas{
+		border: 1px black solid;
+	}
+	input[type="number"]{
+		width: 60px;
+	}
+	.ok{
+		display: block;
+		position: fixed;
+		right: 0;
+		bottom: 0;
+		z-index: 1;
+		padding: 1vw;
+		font-size: 1.3em;
+		border: 3px outset #aab;
+		background-color: #efe;
+	}
+	.ok:active{
+		border: 3px inset #aab;
+	}
+	</style>
+	
+	<!-- jquery -->
+	<script src="./jquery.min.js"></script>
+	
+	<!-- vue -->
+	<script src="./vue.min.js"></script>
+
+</head>
+<body>
+	
+	<app>
+		<canvas id="painting"
+			v-bind:width="width"
+			v-bind:height="height"
+			@touchstart="touchstart"
+			@touchmove="touchmove"
+			@touchend="touchend"
+			@touchcancel="touchcancel"></canvas>
+		<button class="ok" onclick="location.href = '../index.html';">OK</button>
+		<div>
+			<label>画布大小：</label>
+			<input type="number" v-model="width" /> *
+			<input type="number" v-model="height" /><br/>
+			<!--<input type="file" value="打开图片" />-->
+			<hr/>
+			
+			<button @click="changePaint">画笔</button>
+			<button @click="changePen">钢笔</button><br/>
+			<label>画笔颜色：</label>
+			<input type="color" v-model="color" /><br/>
+			<label>画笔粗细：</label>
+			<input type="number" v-model="size" /><br/>
+			<label>笔锋1：</label>
+			<input type="number" v-model="pen.k1" /><br/>
+			<label>笔锋2：</label>
+			<input type="number" v-model="pen.k2" /><br/>
+			<hr/>
+			
+			<button @click="changeSelect">选择</button><br/>
+			<label>触摸信息</label>
+			<span>坐标：{{ touch.last }}</span>
+			
+		</div>
+	</app>
+	
+<script>
+console.log = ()=>{};
+
+class Point{
+	constructor(x, y, t=+new Date()){
+		this.x = x;
+		this.y = y;
+		this.v = {x: 0, y: 0, len: 0};
+		this.t = t;
+	}
+	
+	setVelocity(x, y){
+		this.v.x = x;
+		this.v.y = y;
+		this.v.len = Math.sqrt(x*x + y*y);
+		return this;
+	}
+	
+	toString(){
+		return `(${this.x}, ${this.y}) at ${this.t}`
+	}
+}
+
+
+
+app = Vue.createApp({
+	data(){
+		return {
+			width: window.innerWidth - 8*2 - 2,
+			height: window.innerHeight - 8*2 - 2,
+			canvas: null,
+			ctx: null,
+			type: "pen",
+			color: "#fff",
+			size: 5,
+			touch: {},
+			pen: {
+				k1: 5, //笔锋粗细系数
+				k2: 0.5, //笔锋系数
+				points: [], //点
+				start: null //起点
+			},
+			saves: {}
+		};
+	},
+	
+	mounted(){
+		this.canvas = $("#painting")[0];
+		this.ctx = $("#painting")[0].getContext("2d");
+		this.ctx.fillStyle = "black";
+		this.ctx.fillRect(0, 0, this.width, this.height)
+	},
+	
+	methods: {
+		//获取Touch坐标
+		getPos(touch){
+			const canvasPos = this.canvas.getBoundingClientRect();
+			let {clientX: x, clientY: y} = touch;
+			return new Point(x-canvasPos.left, y-canvasPos.top);
+		},
+		
+		//画直线
+		drawLine(p0, p1){
+			this.ctx.beginPath();
+			this.ctx.strokeStyle = this.color;
+			this.ctx.lineWidth = this.size;
+			this.ctx.moveTo(p0.x, p0.y);
+			this.ctx.lineTo(p1.x, p1.y);
+			this.ctx.stroke();
+		},
+		
+		//画圆
+		drawCircle(p){
+			this.ctx.beginPath();
+			this.ctx.fillStyle = this.color;
+			this.ctx.arc(p.x, p.y, this.size/2, 0, 2*Math.PI);
+			this.ctx.fill();
+		},
+		
+		//画十字
+		drawCross(p){
+			this.ctx.beginPath();
+			this.ctx.strokeStyle = "#f00";
+			this.ctx.lineWidth = 1;
+			this.ctx.moveTo(0, p.y);
+			this.ctx.lineTo(this.width, p.y);
+			this.ctx.moveTo(p.x, 0);
+			this.ctx.lineTo(p.x, this.height);
+			this.ctx.stroke();
+		},
+		
+		/* Save */
+		save(name){
+			this.saves[name] = this.ctx.getImageData(0, 0, this.width, this.height); //保存初态
+		},
+		
+		restore(name){
+			if (this.saves[name])
+				this.ctx.putImageData(this.saves[name], 0, 0);
+		},
+		
+		remove(name){
+			if (this.saves[name])
+				this.saves[name] = null;
+		},
+		
+		
+		/* Touch */
+		//start
+		touchstart(e){
+			let point = this.getPos(e.targetTouches[0]);
+			console.log("touchstart", point);
+			
+			switch (this.type){
+				case "paint":
+					this.drawCircle(point);
+					break;
+				case "pen":
+					this.penInit();
+					this.pen.points.push(point);
+					this.pen.start = point;
+					break;
+				case "select":
+					this.restore("beforeSelect"); //去除十字
+					this.save("beforeSelect"); //保存初态
+					this.drawCross(point);
+					break;
+			}
+			this.touch.last = point;
+			
+			e.preventDefault();
+			return false;
+		},
+		
+		//move
+		touchmove(e){
+			let point = this.getPos(e.targetTouches[0]);
+			console.log("touchmove", point);
+			
+			switch (this.type){
+				case "paint":
+					this.drawLine(this.touch.last, point);
+					break;
+				case "pen":
+					const dx = point.x - this.touch.last.x,
+						dy = point.y - this.touch.last.y,
+						dt = point.t - this.touch.last.t;
+					point.setVelocity(dx/dt, dy/dt);
+					this.touch.last.setVelocity(
+						(this.touch.last.v.x + dx/dt) / 2,
+						(this.touch.last.v.y + dy/dt) / 2
+					);
+					this.pen.points.push(point);
+					this.pen.end = point;
+					this.penUpdate();
+					break;
+				case "select":
+					this.restore("beforeSelect"); //去除十字
+					this.drawCross(point);
+					break;
+			}
+			this.touch.last = point;
+			
+			e.preventDefault();
+			return false;
+		},
+		
+		//end
+		touchend(e){
+			let point = this.getPos(e.changedTouches[0]);
+			console.log("touchend", point);
+			
+			switch (this.type){
+				case "paint":
+					this.drawCircle(point);
+					break;
+				case "pen":
+					const dx = point.x - this.touch.last.x,
+						dy = point.y - this.touch.last.y,
+						dt = point.t - this.touch.last.t;
+					point.setVelocity(dx/dt, dy/dt);
+					this.touch.last.setVelocity(
+						(this.touch.last.v.x + dx/dt) / 2,
+						(this.touch.last.v.y + dy/dt) / 2
+					);
+					this.pen.points.push(point);
+					this.pen.end = point;
+					this.penUpdate();
+					break;
+				case "select":
+					this.restore("beforeSelect"); //去除十字
+					this.drawCross(point);
+					break;
+			}
+			this.touch.last = point;
+			
+			e.preventDefault();
+			return false;
+		},
+		
+		//cancel
+		touchcancel(e){
+			console.log("touchcancel")
+			
+			e.preventDefault();
+			return false;
+		},
+		
+		
+		/* Pen */
+		penInit(){
+			this.save("beforePen"); //保存初态
+			this.pen.points = []; //点
+			this.pen.start = null; //起点
+		},
+		
+		penUpdate(){
+			this.pen.start.v.x = this.pen.start.v.y = this.pen.start.v.len = 0;
+			const path1 = [], path2 = [];
+			for (const point of this.pen.points){
+				const b = this.pen.k1 / this.size;
+				const r = this.pen.k1 / (point.v.len + b) / 2;
+				const p1 = [-point.v.y/point.v.len*r, point.v.x/point.v.len*r],
+					p2 = [point.v.y/point.v.len*r, -point.v.x/point.v.len*r];
+				path1.push([
+					point.x + p1[0],
+					point.y + p1[1]
+				]);
+				path2.push([
+					point.x + p2[0],
+					point.y + p2[1]
+				]);
+			}
+			
+			const path = [...path1];
+			for (let i=path2.length-1; i>=0; i--)
+				path.push( path2[i] );
+			
+			this.restore("beforePen"); //还原
+			this.ctx.beginPath();
+			this.ctx.fillStyle = this.color;
+			this.ctx.moveTo(path[0][0], path[0][1]);
+			for (let i=1; i<path.length; i+=2){
+				if (path[+i+1]){
+					const A = path[+i-1],
+						B = path[i],
+						C = path[+i+1],
+						//B1 = (1-this.pen.k2) * A + this.pen.k2 * B
+						B1 = [
+							(1-this.pen.k2) * A[0] + this.pen.k2 * B[0],
+							(1-this.pen.k2) * A[1] + this.pen.k2 * B[1]
+						],
+						//B2 = (1-this.pen.k2) * B + this.pen.k2 * C
+						B2 = [
+							(1-this.pen.k2) * B[0] + this.pen.k2 * C[0],
+							(1-this.pen.k2) * B[1] + this.pen.k2 * C[1]
+						],
+						AB = Math.sqrt((B[0]-A[0])**2, (B[1]-A[1])**2),
+						BC = Math.sqrt((C[0]-B[0])**2, (C[1]-B[1])**2),
+						//T = BC/(AB+BC) * B1 + AB/(AB+BC) * B2
+						T = [
+							BC/(AB+BC) * B1[0] + AB/(AB+BC) * B2[0],
+							BC/(AB+BC) * B1[1] + AB/(AB+BC) * B2[1]
+						],
+						//→TB = B - T
+						TB = [B[0] - T[0], B[1] - T[1]],
+						//CTRL1 = B1 + TB, CTRL2 = B2 + TB
+						CTRL1 = [B1[0] + TB[0], B1[1] + TB[1]],
+						CTRL2 = [B2[0] + TB[0], B2[1] + TB[1]];
+					this.ctx.bezierCurveTo(CTRL1[0], CTRL1[1], CTRL2[0], CTRL2[1], C[0], C[1]);
+				}else{
+					this.ctx.lineTo(path[i][0], path[i][1]);
+				}
+			}
+			this.ctx.fill();
+		},
+		
+		
+		/* 切换工具 */
+		//画笔
+		changePaint(){
+			this.type = "paint";
+			this.restore("beforeSelect"); //去除十字
+			this.remove("beforeSelect");
+		},
+		
+		//毛笔
+		changePen(){
+			this.type = "pen";
+			this.restore("beforeSelect"); //去除十字
+			this.remove("beforeSelect");
+		},
+		
+		//选择
+		changeSelect(){
+			this.type = "select";
+		}
+	}
+}).mount("app");
+</script>
+</body>
+</html>
